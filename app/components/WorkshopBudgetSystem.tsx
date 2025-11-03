@@ -523,14 +523,18 @@ export default function WorkshopBudgetSystem() {
                 Dados do Cliente
               </h2>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <label htmlFor="client-name" className="sr-only">Nome do cliente</label>
                 <input
+                  id="client-name"
                   type="text"
                   placeholder="Nome do cliente"
                   value={clientData.name}
                   onChange={(e) => setClientData({ ...clientData, name: e.target.value })}
                   className="w-full px-4 py-3 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                 />
+                <label htmlFor="client-phone" className="sr-only">Telefone/WhatsApp</label>
                 <input
+                  id="client-phone"
                   type="tel"
                   placeholder="Telefone/WhatsApp"
                   value={clientData.phone}
@@ -538,14 +542,18 @@ export default function WorkshopBudgetSystem() {
                   maxLength={15}
                   className="w-full px-4 py-3 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                 />
+                <label htmlFor="client-vehicle" className="sr-only">Veículo</label>
                 <input
+                  id="client-vehicle"
                   type="text"
                   placeholder="Veículo (ex: Fiat Uno 2015)"
                   value={clientData.vehicle}
                   onChange={(e) => setClientData({ ...clientData, vehicle: e.target.value })}
                   className="w-full px-4 py-3 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                 />
+                <label htmlFor="client-plate" className="sr-only">Placa</label>
                 <input
+                  id="client-plate"
                   type="text"
                   placeholder="Placa"
                   value={clientData.plate}
@@ -571,7 +579,9 @@ export default function WorkshopBudgetSystem() {
                       )}
                     </div>
                     <div className="space-y-3">
+                      <label htmlFor={`item-desc-${item.id}`} className="sr-only">Descrição do serviço/peça</label>
                       <input
+                        id={`item-desc-${item.id}`}
                         type="text"
                         placeholder="Descrição do serviço/peça"
                         value={item.description}
@@ -579,7 +589,9 @@ export default function WorkshopBudgetSystem() {
                         className="w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                       />
                       <div className="grid grid-cols-2 gap-3">
+                        <label htmlFor={`item-qty-${item.id}`} className="sr-only">Quantidade</label>
                         <input
+                          id={`item-qty-${item.id}`}
                           type="number"
                           placeholder="Quantidade"
                           min={1}
@@ -589,7 +601,9 @@ export default function WorkshopBudgetSystem() {
                         />
                         <div className="relative">
                           <span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-600">R$</span>
+                          <label htmlFor={`item-price-${item.id}`} className="sr-only">Valor unitário</label>
                           <input
+                            id={`item-price-${item.id}`}
                             type="text"
                             placeholder="0,00"
                             value={item.displayPrice}
@@ -652,9 +666,9 @@ export default function WorkshopBudgetSystem() {
 
       {/* PDF Preview Modal */}
       {showPdf && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-lg w-full max-w-5xl max-h-[90vh] flex flex-col overflow-hidden">
-            <div className="flex items-center justify-between px-4 py-3 border-b">
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-0 md:p-4 z-50">
+          <div className="bg-white rounded-none md:rounded-lg w-full md:max-w-5xl h-dvh md:max-h-[90vh] flex flex-col overflow-hidden">
+            <div className="flex items-center justify-between px-4 py-3 border-b sticky top-0 bg-white">
               <h3 className="text-lg font-semibold text-gray-800">
                 PDF do Orçamento {pdfNumber ?? ""}
               </h3>
@@ -676,8 +690,8 @@ export default function WorkshopBudgetSystem() {
                   {pdfError}
                 </div>
               ) : pdfUrl ? (
-                <object data={pdfUrl} type="application/pdf" className="w-full h-[80vh]">
-                  <iframe title="PDF" src={pdfUrl} className="w-full h-[80vh]" />
+                <object data={pdfUrl} type="application/pdf" className="w-full h-full">
+                  <iframe title="PDF" src={pdfUrl} className="w-full h-full" />
                 </object>
               ) : (
                 <div className="h-full w-full flex items-center justify-center text-gray-600">

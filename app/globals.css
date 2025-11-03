@@ -1,7 +1,8 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffsff;
+  /* Corrige hex inválido e define fundo claro padrão */
+  --background: #ffffff;
   --foreground: #171717;
 }
 
