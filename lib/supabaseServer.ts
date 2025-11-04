@@ -15,11 +15,4 @@ export function getSupabaseServer() {
     db: { schema: "public" },
   });
 }
-
-export type Json =
-  | string
-  | number
-  | boolean
-  | null
-  | { [key: string]: Json }
-  | Json[];
+// Mantemos este arquivo mínimo e direto para iniciantes.

@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import {
   Plus,
   Trash2,
@@ -11,8 +11,10 @@ import {
   Eye,
   Building2,
   Phone,
+  Settings,
+  Search,
 } from "lucide-react";
-// Persistência agora é feita somente no banco via API
+// App de orçamentos: UI + chamadas de API (Supabase / PDF / n8n)
 
 // Tipos
 type CompanyData = {
@@ -81,18 +83,203 @@ const masks = {
   },
 };
 
+// Utilitário de busca mais robusto: case/acentos-insensível e ignora pontuação/espaços
+// Mantém apenas a-z e 0-9 para termos comparáveis (ex.: "ORC 123" ~ "ORC-123", placas e telefones com/sem máscara)
+const normalize = (s: string | undefined) =>
+  (s || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "") // remove acentos
+    .replace(/[^a-z0-9]/g, ""); // remove tudo que não for letra/dígito
+
+// Componentes pequenos para deixar o JSX principal mais limpo
+type SearchBarProps = {
+  value: string;
+  onChange: (v: string) => void;
+  onSubmit: () => void;
+  onClear: () => void;
+  inputRef?: React.RefObject<HTMLInputElement | null>;
+};
+
+function SearchBar({ value, onChange, onSubmit, onClear, inputRef }: SearchBarProps) {
+  return (
+    <div className="flex gap-2" role="search">
+      <div className="relative flex-1">
+        <Search size={18} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500" />
+        <input
+          ref={inputRef}
+          type="text"
+          value={value}
+          onChange={(e) => {
+            onChange(e.target.value);
+            // Reforça a manutenção do foco após re-render
+            requestAnimationFrame(() => inputRef?.current?.focus());
+          }}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              onSubmit();
+            }
+          }}
+          placeholder="Buscar por número, cliente, placa ou veículo..."
+          aria-label="Buscar orçamentos"
+          autoComplete="off"
+          spellCheck={false}
+          className="w-full pl-10 pr-10 py-2.5 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+        />
+        {value && (
+          <button
+            type="button"
+            aria-label="Limpar busca"
+            className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-700"
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={onClear}
+          >
+            <X size={16} />
+          </button>
+        )}
+      </div>
+      <button
+        type="button"
+        onClick={onSubmit}
+        className="px-4 py-2.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+      >
+        Buscar
+      </button>
+    </div>
+  );
+}
+
+type HistoryCardProps = {
+  budget: Budget;
+  onOpen: (number: string) => void;
+  onResend: (number: string) => void;
+  sendingNumber: string | null;
+  formatCurrency: (v: number) => string;
+};
+
+function HistoryCard({ budget, onOpen, onResend, sendingNumber, formatCurrency }: HistoryCardProps) {
+  return (
+    <div
+      role="button"
+      tabIndex={0}
+      onClick={() => onOpen(budget.number)}
+      onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") onOpen(budget.number); }}
+      className="bg-white border rounded-lg p-4 shadow-sm hover:shadow-md transition cursor-pointer hover:border-blue-200"
+    >
+      <div className="flex justify-between items-start mb-2">
+        <div>
+          <p className="font-semibold text-gray-800">{budget.client.name}</p>
+          <p className="text-sm text-gray-600">{budget.client.vehicle} - {budget.client.plate}</p>
+        </div>
+        <div className="text-right">
+          <p className="font-bold text-green-600">{formatCurrency(budget.total)}</p>
+          <p className="text-xs text-gray-500">{budget.number}</p>
+        </div>
+      </div>
+      <div className="flex justify-between items-center pt-2 border-t">
+        <p className="text-xs text-gray-500">
+          {new Date(budget.date).toLocaleDateString("pt-BR")} às {new Date(budget.date).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}
+        </p>
+        <div className="flex items-center gap-3">
+          <p className="text-xs text-gray-600">{budget.items.length} {budget.items.length === 1 ? "item" : "itens"}</p>
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); onResend(budget.number); }}
+            disabled={sendingNumber === budget.number}
+            className={`text-sm px-3 py-1.5 rounded-md border ${sendingNumber === budget.number ? "bg-gray-200 text-gray-500" : "bg-blue-600 text-white hover:bg-blue-700"}`}
+            title="Reenviar orçamento via WhatsApp (n8n)"
+          >
+            {sendingNumber === budget.number ? "Enviando..." : "Reenviar"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+type ItemRowProps = {
+  item: Item;
+  index: number;
+  totalItems: number;
+  onRemove: (id: number) => void;
+  onUpdate: (id: number, field: keyof Item, value: unknown) => void;
+  onPriceChange: (id: number, value: string) => void;
+  formatCurrency: (v: number) => string;
+};
+
+function ItemRow({ item, index, totalItems, onRemove, onUpdate, onPriceChange, formatCurrency }: ItemRowProps) {
+  return (
+    <div className="border rounded-lg p-4 bg-gray-50">
+      <div className="flex justify-between items-center mb-3">
+        <span className="text-sm font-semibold text-gray-600">Item {index + 1}</span>
+        {totalItems > 1 && (
+          <button onClick={() => onRemove(item.id)} className="text-red-500 hover:text-red-700">
+            <Trash2 size={18} />
+          </button>
+        )}
+      </div>
+      <div className="space-y-3">
+        <label htmlFor={`item-desc-${item.id}`} className="sr-only">Descrição do serviço/peça</label>
+        <input
+          id={`item-desc-${item.id}`}
+          type="text"
+          placeholder="Descrição do serviço/peça"
+          value={item.description}
+          onChange={(e) => onUpdate(item.id, "description", e.target.value)}
+          className="w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+        />
+        <div className="grid grid-cols-2 gap-3">
+          <label htmlFor={`item-qty-${item.id}`} className="sr-only">Quantidade</label>
+          <input
+            id={`item-qty-${item.id}`}
+            type="number"
+            placeholder="Quantidade"
+            min={1}
+            value={item.quantity}
+            onChange={(e) => onUpdate(item.id, "quantity", parseInt(e.target.value, 10) || 1)}
+            className="w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+          />
+          <div className="relative">
+            <span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-600">R$</span>
+            <label htmlFor={`item-price-${item.id}`} className="sr-only">Valor unitário</label>
+            <input
+              id={`item-price-${item.id}`}
+              type="text"
+              placeholder="0,00"
+              value={item.displayPrice}
+              onChange={(e) => onPriceChange(item.id, e.target.value)}
+              className="w-full pl-12 pr-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+            />
+          </div>
+        </div>
+        <div className="text-right">
+          <span className="text-sm text-gray-600">Subtotal: </span>
+          <span className="font-bold text-green-600">{formatCurrency(item.quantity * item.unitPrice)}</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function WorkshopBudgetSystem() {
   const [activeTab, setActiveTab] = useState<"new" | "history">("new");
   const [showPreview, setShowPreview] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [companyData] = useState<CompanyData>({
-    name: "Auto Mecânica Silva",
-    cnpj: "12.345.678/0001-90",
-    phone: "(11) 98765-4321",
-    email: "contato@oficinasilva.com.br",
-    address: "Rua das Oficinas, 123 - São Paulo, SP",
+    name: "",
+    cnpj: "",
+    phone: "",
+    email: "",
+    address: "",
     logo: "",
   });
+  const [company, setCompany] = useState<CompanyData | null>(null);
+  const [showSettings, setShowSettings] = useState(false);
+  const [savingSettings, setSavingSettings] = useState(false);
+  const [selectedLogoFile, setSelectedLogoFile] = useState<File | null>(null);
+  const [logoPreview, setLogoPreview] = useState<string | null>(null);
+  const [uploadingLogo, setUploadingLogo] = useState(false);
 
   const [clientData, setClientData] = useState<ClientData>({
     name: "",
@@ -106,6 +293,15 @@ export default function WorkshopBudgetSystem() {
   ]);
 
   const [budgets, setBudgets] = useState<Budget[]>([]);
+  // Busca: separa texto digitado do termo aplicado
+  const [searchInput, setSearchInput] = useState("");
+  const [searchQuery, setSearchQuery] = useState("");
+  const searchInputRef = useRef<HTMLInputElement>(null);
+  // Modal de configurações: refs para trap de foco
+  const settingsDialogRef = useRef<HTMLDivElement>(null);
+  const settingsFirstInputRef = useRef<HTMLInputElement>(null);
+  // Modal de PDF: trap de foco
+  const pdfDialogRef = useRef<HTMLDivElement>(null);
   const [showSuccess, setShowSuccess] = useState(false);
   const [sendingNumber, setSendingNumber] = useState<string | null>(null);
   // Preview de PDF de orçamentos do histórico
@@ -116,9 +312,105 @@ export default function WorkshopBudgetSystem() {
   const [pdfError, setPdfError] = useState<string | null>(null);
 
   useEffect(() => {
+    // Carregar configurações da oficina
+    (async () => {
+      try {
+        const res = await fetch("/api/settings", { cache: "no-store" });
+        if (res.ok) {
+          const json = await res.json();
+          if (json?.company) {
+            const c = json.company as CompanyData;
+            // Aplicar máscaras ao exibir valores carregados do banco
+            setCompany({
+              ...c,
+              cnpj: masks.cnpj(c?.cnpj ?? ""),
+              phone: masks.phone(c?.phone ?? ""),
+            });
+          }
+        }
+      } catch {}
+    })();
+    // Carregar histórico de orçamentos
     loadBudgets();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    if (activeTab === "history") {
+      // garante foco no campo após render
+      requestAnimationFrame(() => searchInputRef.current?.focus());
+    }
+  }, [activeTab]);
+
+  // Trap de foco e ESC para o modal de configurações
+  useEffect(() => {
+    if (!showSettings) return;
+    const container = settingsDialogRef.current;
+    // foco inicial no primeiro input
+    requestAnimationFrame(() => settingsFirstInputRef.current?.focus());
+    const selector = 'a, button, input, textarea, select, [tabindex]:not([tabindex="-1"])';
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        setShowSettings(false);
+        return;
+      }
+      if (e.key !== "Tab" || !container) return;
+      const focusables = Array.from(container.querySelectorAll<HTMLElement>(selector)).filter(el => !el.hasAttribute('disabled'));
+      if (focusables.length === 0) return;
+      const first = focusables[0];
+      const last = focusables[focusables.length - 1];
+      const active = document.activeElement as HTMLElement | null;
+      if (e.shiftKey) {
+        if (!active || active === first) {
+          e.preventDefault();
+          last.focus();
+        }
+      } else {
+        if (!active || active === last) {
+          e.preventDefault();
+          first.focus();
+        }
+      }
+    };
+    document.addEventListener('keydown', onKeyDown);
+    return () => document.removeEventListener('keydown', onKeyDown);
+  }, [showSettings]);
+
+  // Trap de foco e ESC para o modal de PDF
+  useEffect(() => {
+    if (!showPdf) return;
+    const container = pdfDialogRef.current;
+    // foca o botão fechar se existir
+    requestAnimationFrame(() => container?.querySelector<HTMLElement>('button[aria-label="Fechar preview do PDF"]')?.focus());
+    const selector = 'a, button, input, textarea, select, [tabindex]:not([tabindex="-1"])';
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        closePdfPreview();
+        return;
+      }
+      if (e.key !== "Tab" || !container) return;
+      const focusables = Array.from(container.querySelectorAll<HTMLElement>(selector)).filter(el => !el.hasAttribute('disabled'));
+      if (focusables.length === 0) return;
+      const first = focusables[0];
+      const last = focusables[focusables.length - 1];
+      const active = document.activeElement as HTMLElement | null;
+      if (e.shiftKey) {
+        if (!active || active === first) {
+          e.preventDefault();
+          last.focus();
+        }
+      } else {
+        if (!active || active === last) {
+          e.preventDefault();
+          first.focus();
+        }
+      }
+    };
+    document.addEventListener('keydown', onKeyDown);
+    return () => document.removeEventListener('keydown', onKeyDown);
+  }, [showPdf]);
 
   const loadBudgets = async () => {
     try {
@@ -220,7 +512,7 @@ export default function WorkshopBudgetSystem() {
 
   const updateItem = (id: number, field: keyof Item, value: unknown) => {
     setItems((prev) =>
-      prev.map((item) => (item.id === id ? { ...item, [field]: value } as Item : item))
+      prev.map((item) => (item.id === id ? ({ ...item, [field]: value } as Item) : item))
     );
   };
 
@@ -264,13 +556,66 @@ export default function WorkshopBudgetSystem() {
     return `ORC-${Date.now()}`;
   };
 
-  // Removido: salvamento local (somente banco de dados agora)
+  // Handlers auxiliares (deixam JSX mais limpo)
+  const saveCompanySettings = async () => {
+    if (!company?.name) {
+      setErrorMsg("Informe ao menos o nome da oficina.");
+      return;
+    }
+    setSavingSettings(true);
+    try {
+      const res = await fetch("/api/settings", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(company),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok || (json as any)?.ok === false) {
+        setErrorMsg((json as any)?.error || "Falha ao salvar configurações.");
+        return;
+      }
+      setShowSettings(false);
+    } catch (e: any) {
+      setErrorMsg(e?.message || "Erro ao salvar configurações.");
+    } finally {
+      setSavingSettings(false);
+    }
+  };
 
+  const uploadLogo = async () => {
+    if (!selectedLogoFile) return;
+    setUploadingLogo(true);
+    try {
+      const fd = new FormData();
+      fd.append("file", selectedLogoFile, selectedLogoFile.name);
+      const res = await fetch("/api/settings/logo", { method: "POST", body: fd });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok || (json as any)?.ok === false) {
+        setErrorMsg((json as any)?.error || "Falha ao enviar logo.");
+        return;
+      }
+      const url: string | undefined = (json as any)?.url;
+      if (url) setCompany({ ...(company ?? companyData), logo: url });
+      setSelectedLogoFile(null);
+      if (logoPreview) URL.revokeObjectURL(logoPreview);
+      setLogoPreview(null);
+    } catch (e: any) {
+      setErrorMsg(e?.message || "Erro ao enviar logo.");
+    } finally {
+      setUploadingLogo(false);
+    }
+  };
   const handleSendBudget = async () => {
+    const companyInfo: CompanyData = company ?? companyData; // fallback vazio
+    if (!companyInfo.name) {
+      setErrorMsg("Configure os dados da oficina antes de enviar o orçamento.");
+      setShowSettings(true);
+      return;
+    }
     const budgetData: Budget = {
       number: generateBudgetNumber(),
       date: new Date().toISOString(),
-      company: companyData,
+      company: companyInfo,
       client: clientData,
       items: items,
       total: calculateTotal(),
@@ -329,11 +674,11 @@ export default function WorkshopBudgetSystem() {
         <div className="p-6 space-y-6">
           {/* Cabeçalho da Empresa */}
           <div className="border-b pb-4">
-            <h1 className="text-2xl font-bold text-gray-800">{companyData.name}</h1>
-            <p className="text-sm text-gray-600">CNPJ: {companyData.cnpj}</p>
-            <p className="text-sm text-gray-600">{companyData.phone}</p>
-            <p className="text-sm text-gray-600">{companyData.email}</p>
-            <p className="text-sm text-gray-600">{companyData.address}</p>
+            <h1 className="text-2xl font-bold text-gray-800">{(company ?? companyData).name}</h1>
+            <p className="text-sm text-gray-600">CNPJ: {(company ?? companyData).cnpj}</p>
+            <p className="text-sm text-gray-600">{(company ?? companyData).phone}</p>
+            <p className="text-sm text-gray-600">{(company ?? companyData).email}</p>
+            <p className="text-sm text-gray-600">{(company ?? companyData).address}</p>
           </div>
 
           {/* Dados do Cliente */}
@@ -397,62 +742,60 @@ export default function WorkshopBudgetSystem() {
 
   const HistoryTab = () => (
     <div className="space-y-3">
-      {budgets.length === 0 ? (
-        <div className="text-center py-12 text-gray-500">
-          <History size={48} className="mx-auto mb-4 opacity-50" />
-          <p>Nenhum orçamento enviado ainda</p>
-        </div>
-      ) : (
-        budgets.map((budget) => (
-          <div
-            key={budget.number}
-            role="button"
-            tabIndex={0}
-            onClick={() => openPdfPreview(budget.number)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" || e.key === " ") openPdfPreview(budget.number);
-            }}
-            className="bg-white border rounded-lg p-4 shadow-sm hover:shadow-md transition cursor-pointer hover:border-blue-200"
-          >
-            <div className="flex justify-between items-start mb-2">
-              <div>
-                <p className="font-semibold text-gray-800">{budget.client.name}</p>
-                <p className="text-sm text-gray-600">
-                  {budget.client.vehicle} - {budget.client.plate}
-                </p>
-              </div>
-              <div className="text-right">
-                <p className="font-bold text-green-600">{formatCurrency(budget.total)}</p>
-                <p className="text-xs text-gray-500">{budget.number}</p>
-              </div>
+      <div className="mb-3">
+        <SearchBar
+          value={searchInput}
+          onChange={setSearchInput}
+          onSubmit={() => setSearchQuery(searchInput)}
+          onClear={() => { setSearchInput(""); setSearchQuery(""); }}
+          inputRef={searchInputRef}
+        />
+      </div>
+
+      {(() => {
+        const q = normalize(searchQuery);
+        const list = !q
+          ? budgets
+          : budgets.filter((b) => {
+              const inNumber = normalize(b.number).includes(q);
+              const inClient = [b.client?.name, b.client?.phone, b.client?.vehicle, b.client?.plate]
+                .some((v) => normalize(v).includes(q));
+              const inItems = (b.items || []).some((it) => normalize(it.description).includes(q));
+              return inNumber || inClient || inItems;
+            });
+
+        if (budgets.length === 0) {
+          return (
+            <div className="text-center py-12 text-gray-500">
+              <History size={48} className="mx-auto mb-4 opacity-50" />
+              <p>Nenhum orçamento enviado ainda</p>
             </div>
-            <div className="flex justify-between items-center pt-2 border-t">
-              <p className="text-xs text-gray-500">
-                {new Date(budget.date).toLocaleDateString("pt-BR")} às
-                {" "}
-                {new Date(budget.date).toLocaleTimeString("pt-BR", {
-                  hour: "2-digit",
-                  minute: "2-digit",
-                })}
-              </p>
-              <div className="flex items-center gap-3">
-                <p className="text-xs text-gray-600">
-                  {budget.items.length} {budget.items.length === 1 ? "item" : "itens"}
-                </p>
-                <button
-                  type="button"
-                  onClick={(e) => { e.stopPropagation(); resendBudget(budget.number); }}
-                  disabled={sendingNumber === budget.number}
-                  className={`text-sm px-3 py-1.5 rounded-md border ${sendingNumber === budget.number ? "bg-gray-200 text-gray-500" : "bg-blue-600 text-white hover:bg-blue-700"}`}
-                  title="Reenviar orçamento via WhatsApp (n8n)"
-                >
-                  {sendingNumber === budget.number ? "Enviando..." : "Reenviar"}
-                </button>
-              </div>
+          );
+        }
+
+        if (list.length === 0) {
+          return (
+            <div className="text-center py-12 text-gray-500">
+              <p>Nenhum orçamento encontrado para "{searchQuery}"</p>
             </div>
-          </div>
-        ))
-      )}
+          );
+        }
+
+        return (
+          <>
+            {list.map((budget) => (
+              <HistoryCard
+                key={budget.number}
+                budget={budget}
+                onOpen={openPdfPreview}
+                onResend={resendBudget}
+                sendingNumber={sendingNumber}
+                formatCurrency={formatCurrency}
+              />
+            ))}
+          </>
+        );
+      })()}
     </div>
   );
 
@@ -462,14 +805,163 @@ export default function WorkshopBudgetSystem() {
       <div className="bg-white shadow-sm border-b sticky top-0 z-40">
         <div className="max-w-4xl mx-auto px-4 py-4">
           <div className="flex items-center justify-between">
-            <div>
-              <h1 className="text-2xl font-bold text-gray-800">{companyData.name}</h1>
-              <p className="text-sm text-gray-600">Sistema de Orçamentos</p>
+            <div className="flex items-center gap-3 min-w-0">
+              {((company ?? companyData).logo ? (
+                // Logo fornecida
+                <img
+                  src={(company ?? companyData).logo}
+                  alt={(company ?? companyData).name || "Logo da oficina"}
+                  className="h-10 w-auto rounded-sm object-contain border border-gray-200 bg-white"
+                />
+              ) : (
+                // Fallback ícone
+                <Building2 size={32} className="text-blue-600 shrink-0" />
+              ))}
+              <div className="min-w-0">
+                <h1 className="text-2xl font-bold text-gray-800 truncate">{(company ?? companyData).name || "Dados da oficina não configurados"}</h1>
+                <p className="text-sm text-gray-600">Sistema de Orçamentos</p>
+              </div>
             </div>
-            <Building2 size={32} className="text-blue-600" />
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                title="Configurações da oficina"
+                onClick={() => setShowSettings((s) => !s)}
+                className="p-2 rounded-lg border text-gray-700 hover:bg-gray-50 hover:border-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                aria-label="Configurações"
+              >
+                <Settings size={22} />
+              </button>
+            </div>
           </div>
         </div>
       </div>
+
+      {showSettings && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-0 md:p-4">
+          {/* Overlay */}
+          <div
+            className="absolute inset-0 bg-black/50"
+            onClick={() => setShowSettings(false)}
+          />
+          {/* Dialog */}
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="settings-title"
+            className="relative bg-white rounded-none md:rounded-lg w-full md:max-w-2xl h-dvh md:max-h-[90vh] flex flex-col shadow-lg"
+            ref={settingsDialogRef}
+          >
+            <div className="sticky top-0 bg-white border-b px-4 py-3 flex justify-between items-center">
+              <h2 id="settings-title" className="text-lg font-semibold text-gray-800">Configurações da Oficina</h2>
+              <button
+                type="button"
+                onClick={() => setShowSettings(false)}
+                className="p-2 rounded-lg text-gray-600 hover:bg-gray-50"
+                aria-label="Fechar configurações"
+              >
+                <X size={20} />
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto px-4 py-4 md:px-5 md:py-5">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <input
+                  type="text"
+                  placeholder="Nome da oficina"
+                  value={(company ?? companyData).name}
+                  onChange={(e) => setCompany({ ...(company ?? companyData), name: e.target.value })}
+                  ref={settingsFirstInputRef}
+                  className="w-full px-4 py-3 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                />
+                <input
+                  type="text"
+                  placeholder="CNPJ"
+                  value={(company ?? companyData).cnpj}
+                  onChange={(e) => setCompany({ ...(company ?? companyData), cnpj: masks.cnpj(e.target.value) })}
+                  maxLength={18}
+                  className="w-full px-4 py-3 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                />
+                <input
+                  type="tel"
+                  placeholder="Telefone"
+                  value={(company ?? companyData).phone}
+                  onChange={(e) => setCompany({ ...(company ?? companyData), phone: masks.phone(e.target.value) })}
+                  maxLength={15}
+                  className="w-full px-4 py-3 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                />
+                <input
+                  type="email"
+                  placeholder="E-mail"
+                  value={(company ?? companyData).email}
+                  onChange={(e) => setCompany({ ...(company ?? companyData), email: e.target.value })}
+                  className="w-full px-4 py-3 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                />
+                <input
+                  type="text"
+                  placeholder="Endereço"
+                  value={(company ?? companyData).address}
+                  onChange={(e) => setCompany({ ...(company ?? companyData), address: e.target.value })}
+                  className="w-full md:col-span-2 px-4 py-3 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                />
+
+                <div className="md:col-span-2 grid grid-cols-1 md:grid-cols-2 gap-4 items-start">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Logo da oficina</label>
+                    <input
+                      type="file"
+                      accept="image/*"
+                      onChange={(e) => {
+                        const f = e.target.files?.[0] || null;
+                        setSelectedLogoFile(f);
+                        if (logoPreview) URL.revokeObjectURL(logoPreview);
+                        setLogoPreview(f ? URL.createObjectURL(f) : null);
+                      }}
+                      className="block w-full text-sm text-gray-700 file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100"
+                    />
+                    <p className="text-xs text-gray-500 mt-1">PNG/JPG até ~5MB</p>
+                    <button
+                      type="button"
+                      disabled={!selectedLogoFile || uploadingLogo}
+                      onClick={uploadLogo}
+                      className={`mt-3 px-4 py-2 rounded-md text-white ${(!selectedLogoFile || uploadingLogo) ? "bg-gray-400" : "bg-blue-600 hover:bg-blue-700"}`}
+                    >
+                      {uploadingLogo ? "Enviando..." : "Enviar logo"}
+                    </button>
+                  </div>
+                  <div className="flex items-center md:justify-end gap-4">
+                    {logoPreview ? (
+                      <img src={logoPreview} alt="Pré-visualização da logo" className="h-16 w-auto rounded border" />
+                    ) : (company?.logo ? (
+                      <img src={company.logo} alt="Logo atual" className="h-16 w-auto rounded border" />
+                    ) : (
+                      <div className="h-16 w-16 rounded border flex items-center justify-center text-gray-400">Sem logo</div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="sticky bottom-0 bg-white border-t px-4 py-3 flex items-center justify-end gap-3">
+              <button
+                type="button"
+                onClick={() => setShowSettings(false)}
+                className="px-4 py-2 rounded-lg border bg-white hover:bg-gray-50"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={saveCompanySettings}
+                className={`px-4 py-2 rounded-lg text-white ${savingSettings ? "bg-gray-400" : "bg-blue-600 hover:bg-blue-700"}`}
+                disabled={savingSettings}
+              >
+                {savingSettings ? "Salvando..." : "Salvar"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Tabs */}
       <div className="max-w-4xl mx-auto px-4 mt-6">
@@ -667,7 +1159,7 @@ export default function WorkshopBudgetSystem() {
       {/* PDF Preview Modal */}
       {showPdf && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-0 md:p-4 z-50">
-          <div className="bg-white rounded-none md:rounded-lg w-full md:max-w-5xl h-dvh md:max-h-[90vh] flex flex-col overflow-hidden">
+          <div ref={pdfDialogRef} className="bg-white rounded-none md:rounded-lg w-full md:max-w-5xl h-dvh md:max-h-[90vh] flex flex-col overflow-hidden">
             <div className="flex items-center justify-between px-4 py-3 border-b sticky top-0 bg-white">
               <h3 className="text-lg font-semibold text-gray-800">
                 PDF do Orçamento {pdfNumber ?? ""}
