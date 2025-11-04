@@ -105,7 +105,7 @@ function SearchBar({ value, onChange, onSubmit, onClear, inputRef }: SearchBarPr
   return (
     <div className="flex gap-2" role="search">
       <div className="relative flex-1">
-        <Search size={18} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500" />
+        <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500 h-4 w-4 md:h-4 md:w-4" />
         <input
           ref={inputRef}
           type="text"
@@ -125,7 +125,7 @@ function SearchBar({ value, onChange, onSubmit, onClear, inputRef }: SearchBarPr
           aria-label="Buscar orçamentos"
           autoComplete="off"
           spellCheck={false}
-          className="w-full pl-10 pr-10 py-2.5 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+          className="w-full pl-9 md:pl-10 pr-9 md:pr-10 py-2 md:py-2.5 text-sm md:text-base border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
         />
         {value && (
           <button
@@ -135,14 +135,14 @@ function SearchBar({ value, onChange, onSubmit, onClear, inputRef }: SearchBarPr
             onMouseDown={(e) => e.preventDefault()}
             onClick={onClear}
           >
-            <X size={16} />
+            <X className="h-4 w-4" />
           </button>
         )}
       </div>
       <button
         type="button"
         onClick={onSubmit}
-        className="px-4 py-2.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+        className="px-3 py-2 text-sm md:px-4 md:py-2.5 md:text-base bg-blue-600 text-white rounded-lg hover:bg-blue-700"
       >
         Buscar
       </button>
@@ -159,13 +159,19 @@ type HistoryCardProps = {
 };
 
 function HistoryCard({ budget, onOpen, onResend, sendingNumber, formatCurrency }: HistoryCardProps) {
+  // Metadados opcionais de reenvio embutidos no JSON da empresa (armazenados no backend)
+  const meta = (budget.company as unknown as { _meta?: { lastResentAt?: string; resendCount?: number } })._meta;
+  const resendCount = typeof meta?.resendCount === "number" ? meta!.resendCount! : 0;
+  const resendInfo = resendCount > 0
+    ? `Reenviado ${resendCount} ${resendCount === 1 ? "vez" : "vezes"}${meta?.lastResentAt ? ` • último em ${new Date(meta.lastResentAt).toLocaleDateString("pt-BR")} às ${new Date(meta.lastResentAt).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}` : ""}`
+    : null;
   return (
     <div
       role="button"
       tabIndex={0}
       onClick={() => onOpen(budget.number)}
       onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") onOpen(budget.number); }}
-      className="bg-white border rounded-lg p-4 shadow-sm hover:shadow-md transition cursor-pointer hover:border-blue-200"
+  className="bg-white border rounded-lg p-3 md:p-4 shadow-sm hover:shadow-md transition cursor-pointer hover:border-blue-200"
     >
       <div className="flex justify-between items-start mb-2">
         <div>
@@ -178,9 +184,14 @@ function HistoryCard({ budget, onOpen, onResend, sendingNumber, formatCurrency }
         </div>
       </div>
       <div className="flex justify-between items-center pt-2 border-t">
-        <p className="text-xs text-gray-500">
-          {new Date(budget.date).toLocaleDateString("pt-BR")} às {new Date(budget.date).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}
-        </p>
+        <div className="flex flex-col">
+          <p className="text-xs text-gray-500">
+            {new Date(budget.date).toLocaleDateString("pt-BR")} às {new Date(budget.date).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}
+          </p>
+          {resendInfo && (
+            <p className="text-[11px] text-gray-500 mt-0.5">{resendInfo}</p>
+          )}
+        </div>
         <div className="flex items-center gap-3">
           <p className="text-xs text-gray-600">{budget.items.length} {budget.items.length === 1 ? "item" : "itens"}</p>
           <button
@@ -238,6 +249,7 @@ export default function WorkshopBudgetSystem() {
   // Modal de configurações: refs para trap de foco
   const settingsDialogRef = useRef<HTMLDivElement>(null);
   const settingsFirstInputRef = useRef<HTMLInputElement>(null);
+  const logoFileInputRef = useRef<HTMLInputElement>(null);
   // Modal de PDF: trap de foco
   const pdfDialogRef = useRef<HTMLDivElement>(null);
   const [showSuccess, setShowSuccess] = useState(false);
@@ -566,6 +578,37 @@ export default function WorkshopBudgetSystem() {
       setUploadingLogo(false);
     }
   };
+  // Seleciona/valida a imagem de logo com tamanho e tipo
+  const handleSelectLogoFile = (file: File | null) => {
+    if (!file) {
+      if (logoPreview) URL.revokeObjectURL(logoPreview);
+      setSelectedLogoFile(null);
+      setLogoPreview(null);
+      return;
+    }
+    if (!file.type.startsWith("image/")) {
+      setErrorMsg("Envie um arquivo de imagem (PNG, JPG, SVG).");
+      return;
+    }
+    const maxBytes = 5 * 1024 * 1024; // 5MB
+    if (file.size > maxBytes) {
+      setErrorMsg("Imagem maior que 5MB. Reduza o tamanho e tente novamente.");
+      return;
+    }
+    if (logoPreview) URL.revokeObjectURL(logoPreview);
+    setSelectedLogoFile(file);
+    setLogoPreview(URL.createObjectURL(file));
+  };
+  const onLogoInputChange: React.ChangeEventHandler<HTMLInputElement> = (e) => {
+    handleSelectLogoFile(e.target.files?.[0] ?? null);
+  };
+  const onLogoDrop: React.DragEventHandler<HTMLDivElement> = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const file = e.dataTransfer?.files?.[0] ?? null;
+    handleSelectLogoFile(file);
+  };
+  const clearSelectedLogo = () => handleSelectLogoFile(null);
   const handleSendBudget = async () => {
     const companyInfo: CompanyData = company ?? companyData; // fallback vazio
     if (!companyInfo.name) {
@@ -603,6 +646,24 @@ export default function WorkshopBudgetSystem() {
         throw new Error(String(msg));
       }
 
+      // Analisa retorno para saber se n8n foi notificado
+      const out = (await res.json().catch(() => ({} as { ok?: boolean; n8nNotified?: boolean; n8nError?: string | null }))) as {
+        ok?: boolean;
+        n8nNotified?: boolean;
+        n8nError?: string | null;
+      };
+
+      if (out && out.ok) {
+        if (out.n8nNotified === false) {
+          // Mostra aviso não-bloqueante sobre n8n
+          setErrorMsg(
+            out.n8nError
+              ? `Orçamento salvo, mas n8n não foi notificado: ${out.n8nError}`
+              : "Orçamento salvo, mas n8n não foi notificado. Verifique N8N_WEBHOOK_URL/TOKEN e o fluxo responder rápido."
+          );
+        }
+      }
+
       setShowSuccess(true);
       // Recarrega histórico online
       void loadBudgets();
@@ -625,8 +686,13 @@ export default function WorkshopBudgetSystem() {
   };
 
   const BudgetPreview = () => (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-      <div className="bg-white rounded-lg max-w-2xl w-full max-h-[90vh] overflow-y-auto">
+    <div className="fixed inset-0 flex items-center justify-center p-4 z-50">
+      {/* Overlay clicável para fechar */}
+      <div
+        className="absolute inset-0 bg-black/50"
+        onClick={() => setShowPreview(false)}
+      />
+      <div className="relative bg-white rounded-lg max-w-2xl w-full max-h-[90vh] overflow-y-auto">
         <div className="sticky top-0 bg-white border-b px-6 py-4 flex justify-between items-center">
           <h3 className="text-xl font-bold text-gray-800">Preview do Orçamento</h3>
           <button onClick={() => setShowPreview(false)} className="text-gray-500 hover:text-gray-700">
@@ -730,7 +796,7 @@ export default function WorkshopBudgetSystem() {
         if (budgets.length === 0) {
           return (
             <div className="text-center py-12 text-gray-500">
-              <History size={48} className="mx-auto mb-4 opacity-50" />
+              <History className="mx-auto mb-4 opacity-50 h-10 w-10 md:h-12 md:w-12" />
               <p>Nenhum orçamento enviado ainda</p>
             </div>
           );
@@ -778,7 +844,7 @@ export default function WorkshopBudgetSystem() {
                 />
               ) : (
                 // Fallback ícone
-                <Building2 size={32} className="text-blue-600 shrink-0" />
+                <Building2 className="text-blue-600 shrink-0 h-7 w-7 md:h-8 md:w-8" />
               ))}
               <div className="min-w-0">
                 <h1 className="text-2xl font-bold text-gray-800 truncate">{(company ?? companyData).name || "Dados da oficina não configurados"}</h1>
@@ -793,7 +859,7 @@ export default function WorkshopBudgetSystem() {
                 className="p-2 rounded-lg border text-gray-700 hover:bg-gray-50 hover:border-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-500"
                 aria-label="Configurações"
               >
-                <Settings size={22} />
+                <Settings className="h-5 w-5 md:h-6 md:w-6" />
               </button>
             </div>
           </div>
@@ -828,6 +894,7 @@ export default function WorkshopBudgetSystem() {
             </div>
 
             <div className="flex-1 overflow-y-auto px-4 py-4 md:px-5 md:py-5">
+              {/* Dados da Empresa */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <input
                   type="text"
@@ -835,7 +902,7 @@ export default function WorkshopBudgetSystem() {
                   value={(company ?? companyData).name}
                   onChange={(e) => setCompany({ ...(company ?? companyData), name: e.target.value })}
                   ref={settingsFirstInputRef}
-                  className="w-full px-4 py-3 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  className="w-full px-4 py-2 md:py-3 text-sm md:text-base border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                 />
                 <input
                   type="text"
@@ -843,7 +910,7 @@ export default function WorkshopBudgetSystem() {
                   value={(company ?? companyData).cnpj}
                   onChange={(e) => setCompany({ ...(company ?? companyData), cnpj: masks.cnpj(e.target.value) })}
                   maxLength={18}
-                  className="w-full px-4 py-3 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  className="w-full px-4 py-2 md:py-3 text-sm md:text-base border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                 />
                 <input
                   type="tel"
@@ -851,72 +918,123 @@ export default function WorkshopBudgetSystem() {
                   value={(company ?? companyData).phone}
                   onChange={(e) => setCompany({ ...(company ?? companyData), phone: masks.phone(e.target.value) })}
                   maxLength={15}
-                  className="w-full px-4 py-3 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  className="w-full px-4 py-2 md:py-3 text-sm md:text-base border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                 />
                 <input
                   type="email"
                   placeholder="E-mail"
                   value={(company ?? companyData).email}
                   onChange={(e) => setCompany({ ...(company ?? companyData), email: e.target.value })}
-                  className="w-full px-4 py-3 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  className="w-full px-4 py-2 md:py-3 text-sm md:text-base border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                 />
                 <input
                   type="text"
                   placeholder="Endereço"
                   value={(company ?? companyData).address}
                   onChange={(e) => setCompany({ ...(company ?? companyData), address: e.target.value })}
-                  className="w-full md:col-span-2 px-4 py-3 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  className="w-full md:col-span-2 px-4 py-2 md:py-3 text-sm md:text-base border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                 />
-
-                <div className="md:col-span-2 grid grid-cols-1 md:grid-cols-2 gap-4 items-start">
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">Logo da oficina</label>
-                    <input
-                      type="file"
-                      accept="image/*"
-                      onChange={(e) => {
-                        const f = e.target.files?.[0] || null;
-                        setSelectedLogoFile(f);
-                        if (logoPreview) URL.revokeObjectURL(logoPreview);
-                        setLogoPreview(f ? URL.createObjectURL(f) : null);
-                      }}
-                      className="block w-full text-sm text-gray-700 file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100"
-                    />
-                    <p className="text-xs text-gray-500 mt-1">PNG/JPG até ~5MB</p>
-                    <button
-                      type="button"
-                      disabled={!selectedLogoFile || uploadingLogo}
-                      onClick={uploadLogo}
-                      className={`mt-3 px-4 py-2 rounded-md text-white ${(!selectedLogoFile || uploadingLogo) ? "bg-gray-400" : "bg-blue-600 hover:bg-blue-700"}`}
+                {/* Seção de Logo */}
+                <div className="md:col-span-2">
+                  <div className="mb-2 text-sm font-medium text-gray-700">Logo da oficina</div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 items-start">
+                    {/* Dropzone + Pré-visualização */}
+                    <div
+                      onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; }}
+                      onDrop={onLogoDrop}
+                      onClick={() => logoFileInputRef.current?.click()}
+                      className="relative cursor-pointer select-none rounded-lg border-2 border-dashed border-gray-300 bg-gray-50 hover:bg-gray-100 transition p-4"
+                      aria-describedby="logo-hint"
                     >
-                      {uploadingLogo ? "Enviando..." : "Enviar logo"}
-                    </button>
-                  </div>
-                  <div className="flex items-center md:justify-end gap-4">
-                    {logoPreview ? (
-                      <img src={logoPreview} alt="Pré-visualização da logo" className="h-16 w-auto rounded border" />
-                    ) : (company?.logo ? (
-                      <img src={company.logo} alt="Logo atual" className="h-16 w-auto rounded border" />
-                    ) : (
-                      <div className="h-16 w-16 rounded border flex items-center justify-center text-gray-400">Sem logo</div>
-                    ))}
+                      <div className="flex items-center gap-3">
+                        {(logoPreview || company?.logo) ? (
+                          <img
+                            src={logoPreview || company?.logo || ''}
+                            alt="Pré-visualização da logo"
+                            className="h-20 w-auto rounded bg-white border"
+                          />
+                        ) : (
+                          <div className="h-20 w-full flex items-center justify-center text-gray-500 text-sm">
+                            Arraste e solte a imagem aqui ou clique para selecionar
+                          </div>
+                        )}
+                      </div>
+                      <input
+                        ref={logoFileInputRef}
+                        type="file"
+                        accept="image/*"
+                        onChange={onLogoInputChange}
+                        className="sr-only"
+                        aria-label="Selecionar arquivo de logo"
+                      />
+                    </div>
+                    {/* Ações */}
+                    <div className="flex flex-col gap-2">
+                      <div className="text-xs text-gray-500" id="logo-hint">
+                        Tipos aceitos: PNG/JPG/SVG • Tamanho máximo 5MB • Proporção recomendada 3:1 (ex.: 600x200)
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          onClick={() => logoFileInputRef.current?.click()}
+                          className="px-3 py-2 rounded-md border bg-white hover:bg-gray-50"
+                          disabled={uploadingLogo}
+                        >
+                          Escolher imagem
+                        </button>
+                        <button
+                          type="button"
+                          disabled={!selectedLogoFile || uploadingLogo}
+                          onClick={uploadLogo}
+                          className={`px-3 py-2 rounded-md text-white ${(!selectedLogoFile || uploadingLogo) ? "bg-gray-400" : "bg-blue-600 hover:bg-blue-700"}`}
+                        >
+                          {uploadingLogo ? "Enviando..." : "Enviar logo"}
+                        </button>
+                        {selectedLogoFile && (
+                          <button
+                            type="button"
+                            onClick={clearSelectedLogo}
+                            className="px-3 py-2 rounded-md border bg-white hover:bg-gray-50"
+                            disabled={uploadingLogo}
+                          >
+                            Limpar seleção
+                          </button>
+                        )}
+                        {(company?.logo && !selectedLogoFile) && (
+                          <button
+                            type="button"
+                            onClick={() => setCompany({ ...(company ?? companyData), logo: "" })}
+                            className="px-3 py-2 rounded-md border text-red-600 bg-white hover:bg-red-50"
+                            disabled={uploadingLogo}
+                            title="Remover logo atual"
+                          >
+                            Remover logo
+                          </button>
+                        )}
+                      </div>
+                      {(selectedLogoFile) && (
+                        <div className="text-xs text-gray-600">
+                          Selecionado: <span className="font-medium">{selectedLogoFile.name}</span> ({Math.round(selectedLogoFile.size / 1024)} KB)
+                        </div>
+                      )}
+                    </div>
                   </div>
                 </div>
               </div>
             </div>
 
-            <div className="sticky bottom-0 bg-white border-t px-4 py-3 flex items-center justify-end gap-3">
+            <div className="sticky bottom-0 bg-white border-t px-4 py-3 flex items-center justify-end gap-3 text-sm md:text-base">
               <button
                 type="button"
                 onClick={() => setShowSettings(false)}
-                className="px-4 py-2 rounded-lg border bg-white hover:bg-gray-50"
+                className="px-3 py-2 md:px-4 md:py-2 rounded-lg border bg-white hover:bg-gray-50"
               >
                 Cancelar
               </button>
               <button
                 type="button"
                 onClick={saveCompanySettings}
-                className={`px-4 py-2 rounded-lg text-white ${savingSettings ? "bg-gray-400" : "bg-blue-600 hover:bg-blue-700"}`}
+                className={`px-3 py-2 md:px-4 md:py-2 rounded-lg text-white ${savingSettings ? "bg-gray-400" : "bg-blue-600 hover:bg-blue-700"}`}
                 disabled={savingSettings}
               >
                 {savingSettings ? "Salvando..." : "Salvar"}
@@ -946,7 +1064,7 @@ export default function WorkshopBudgetSystem() {
         <div className="flex gap-2 mb-6">
           <button
             onClick={() => setActiveTab("new")}
-            className={`flex-1 py-3 px-4 rounded-lg font-semibold transition ${
+            className={`flex-1 py-2.5 md:py-3 px-4 rounded-lg font-semibold transition text-sm md:text-base ${
               activeTab === "new"
                 ? "bg-blue-600 text-white shadow-md"
                 : "bg-white text-gray-600 hover:bg-gray-50"
@@ -957,7 +1075,7 @@ export default function WorkshopBudgetSystem() {
           </button>
           <button
             onClick={() => setActiveTab("history")}
-            className={`flex-1 py-3 px-4 rounded-lg font-semibold transition ${
+            className={`flex-1 py-2.5 md:py-3 px-4 rounded-lg font-semibold transition text-sm md:text-base ${
               activeTab === "history"
                 ? "bg-blue-600 text-white shadow-md"
                 : "bg-white text-gray-600 hover:bg-gray-50"
@@ -972,9 +1090,9 @@ export default function WorkshopBudgetSystem() {
         {activeTab === "new" ? (
           <div className="space-y-6 pb-8">
             {/* Dados do Cliente */}
-            <div className="bg-white rounded-lg shadow-md p-6">
+            <div className="bg-white rounded-lg shadow-md p-4 md:p-6">
               <h2 className="text-lg font-bold text-gray-800 mb-4 flex items-center">
-                <Phone size={20} className="mr-2 text-blue-600" />
+                <Phone className="mr-2 text-blue-600 h-4 w-4 md:h-5 md:w-5" />
                 Dados do Cliente
               </h2>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -985,7 +1103,7 @@ export default function WorkshopBudgetSystem() {
                   placeholder="Nome do cliente"
                   value={clientData.name}
                   onChange={(e) => setClientData({ ...clientData, name: e.target.value })}
-                  className="w-full px-4 py-3 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  className="w-full px-4 py-2 md:py-3 text-sm md:text-base border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                 />
                 <label htmlFor="client-phone" className="sr-only">Telefone/WhatsApp</label>
                 <input
@@ -995,7 +1113,7 @@ export default function WorkshopBudgetSystem() {
                   value={clientData.phone}
                   onChange={(e) => handlePhoneChange(e.target.value)}
                   maxLength={15}
-                  className="w-full px-4 py-3 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  className="w-full px-4 py-2 md:py-3 text-sm md:text-base border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                 />
                 <label htmlFor="client-vehicle" className="sr-only">Veículo</label>
                 <input
@@ -1004,7 +1122,7 @@ export default function WorkshopBudgetSystem() {
                   placeholder="Veículo (ex: Fiat Uno 2015)"
                   value={clientData.vehicle}
                   onChange={(e) => setClientData({ ...clientData, vehicle: e.target.value })}
-                  className="w-full px-4 py-3 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  className="w-full px-4 py-2 md:py-3 text-sm md:text-base border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                 />
                 <label htmlFor="client-plate" className="sr-only">Placa</label>
                 <input
@@ -1014,22 +1132,22 @@ export default function WorkshopBudgetSystem() {
                   value={clientData.plate}
                   onChange={(e) => handlePlateChange(e.target.value)}
                   maxLength={8}
-                  className="w-full px-4 py-3 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  className="w-full px-4 py-2 md:py-3 text-sm md:text-base border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                 />
               </div>
             </div>
 
             {/* Itens do Orçamento */}
-            <div className="bg-white rounded-lg shadow-md p-6">
+            <div className="bg-white rounded-lg shadow-md p-4 md:p-6">
               <h2 className="text-lg font-bold text-gray-800 mb-4">Itens do Orçamento</h2>
               <div className="space-y-3">
                 {items.map((item, index) => (
-                  <div key={item.id} className="border rounded-lg p-4 bg-gray-50">
+                  <div key={item.id} className="border rounded-lg p-3 md:p-4 bg-gray-50">
                     <div className="flex justify-between items-center mb-3">
                       <span className="text-sm font-semibold text-gray-600">Item {index + 1}</span>
                       {items.length > 1 && (
                         <button onClick={() => removeItem(item.id)} className="text-red-500 hover:text-red-700">
-                          <Trash2 size={18} />
+                          <Trash2 className="h-4 w-4 md:h-[18px] md:w-[18px]" />
                         </button>
                       )}
                     </div>
@@ -1041,7 +1159,7 @@ export default function WorkshopBudgetSystem() {
                         placeholder="Descrição do serviço/peça"
                         value={item.description}
                         onChange={(e) => updateItem(item.id, "description", e.target.value)}
-                        className="w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                        className="w-full px-3 md:px-4 py-2 text-sm md:text-base border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                       />
                       <div className="grid grid-cols-2 gap-3">
                         <label htmlFor={`item-qty-${item.id}`} className="sr-only">Quantidade</label>
@@ -1052,10 +1170,10 @@ export default function WorkshopBudgetSystem() {
                           min={1}
                           value={item.quantity}
                           onChange={(e) => updateItem(item.id, "quantity", parseInt(e.target.value, 10) || 1)}
-                          className="w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                          className="w-full px-3 md:px-4 py-2 text-sm md:text-base border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                         />
                         <div className="relative">
-                          <span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-600">R$</span>
+                          <span className="absolute left-3 md:left-4 top-1/2 -translate-y-1/2 text-gray-600 text-sm md:text-base">R$</span>
                           <label htmlFor={`item-price-${item.id}`} className="sr-only">Valor unitário</label>
                           <input
                             id={`item-price-${item.id}`}
@@ -1063,7 +1181,7 @@ export default function WorkshopBudgetSystem() {
                             placeholder="0,00"
                             value={item.displayPrice}
                             onChange={(e) => handlePriceChange(item.id, e.target.value)}
-                            className="w-full pl-12 pr-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                            className="w-full pl-10 md:pl-12 pr-3 md:pr-4 py-2 text-sm md:text-base border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                           />
                         </div>
                       </div>
@@ -1078,9 +1196,9 @@ export default function WorkshopBudgetSystem() {
 
               <button
                 onClick={addItem}
-                className="w-full mt-4 py-3 border-2 border-dashed border-blue-300 rounded-lg text-blue-600 font-semibold hover:bg-blue-50 transition flex items-center justify-center"
+                className="w-full mt-4 py-2.5 md:py-3 border-2 border-dashed border-blue-300 rounded-lg text-blue-600 font-semibold hover:bg-blue-50 transition flex items-center justify-center text-sm md:text-base"
               >
-                <Plus size={20} className="mr-2" />
+                <Plus className="mr-2 h-4 w-4 md:h-5 md:w-5" />
                 Adicionar Item
               </button>
             </div>
@@ -1097,16 +1215,16 @@ export default function WorkshopBudgetSystem() {
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <button
                 onClick={() => setShowPreview(true)}
-                className="py-4 bg-white border-2 border-blue-600 text-blue-600 rounded-lg font-bold hover:bg-blue-50 transition flex items-center justify-center"
+                className="py-3 md:py-4 bg-white border-2 border-blue-600 text-blue-600 rounded-lg font-bold hover:bg-blue-50 transition flex items-center justify-center text-sm md:text-base"
               >
-                <Eye size={20} className="mr-2" />
+                <Eye className="mr-2 h-4 w-4 md:h-5 md:w-5" />
                 Visualizar Preview
               </button>
               <button
                 onClick={handleSendBudget}
-                className="py-4 bg-linear-to-r from-blue-600 to-blue-700 text-white rounded-lg font-bold hover:from-blue-700 hover:to-blue-800 shadow-lg transition flex items-center justify-center"
+                className="py-3 md:py-4 bg-linear-to-r from-blue-600 to-blue-700 text-white rounded-lg font-bold hover:from-blue-700 hover:to-blue-800 shadow-lg transition flex items-center justify-center text-sm md:text-base"
               >
-                <Send size={20} className="mr-2" />
+                <Send className="mr-2 h-4 w-4 md:h-5 md:w-5" />
                 Enviar Orçamento
               </button>
             </div>
@@ -1121,8 +1239,10 @@ export default function WorkshopBudgetSystem() {
 
       {/* PDF Preview Modal */}
       {showPdf && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-0 md:p-4 z-50">
-          <div ref={pdfDialogRef} className="bg-white rounded-none md:rounded-lg w-full md:max-w-5xl h-dvh md:max-h-[90vh] flex flex-col overflow-hidden">
+        <div className="fixed inset-0 flex items-center justify-center p-0 md:p-4 z-50">
+          {/* Overlay clicável para fechar */}
+          <div className="absolute inset-0 bg-black/50" onClick={closePdfPreview} />
+          <div ref={pdfDialogRef} className="relative bg-white rounded-none md:rounded-lg w-full md:max-w-5xl h-dvh md:max-h-[90vh] flex flex-col overflow-hidden">
             <div className="flex items-center justify-between px-4 py-3 border-b sticky top-0 bg-white">
               <h3 className="text-lg font-semibold text-gray-800">
                 PDF do Orçamento {pdfNumber ?? ""}
