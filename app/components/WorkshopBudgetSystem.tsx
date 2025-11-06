@@ -1156,7 +1156,12 @@ export default function WorkshopBudgetSystem() {
                 </div>
                 <button
                   type="button"
-                  onClick={() => setEditing(null)}
+                  onClick={() => {
+                    // cancelar edição: limpar formulário e voltar para novo orçamento
+                    resetForm();
+                    setEditing(null);
+                    setActiveTab("new");
+                  }}
                   className="px-3 py-1.5 rounded-md border bg-white hover:bg-gray-50 text-sm"
                 >
                   Cancelar edição
